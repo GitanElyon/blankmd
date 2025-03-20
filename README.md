@@ -31,5 +31,3 @@ I aim to create an dynamic markdown expirence in which the user works in a hybri
 Hey I'm just a college indie dev, not a large cooperation. I make tools for myself, and if other people want to use it--not only is that ok with me, that is the best feeling in the world to have people appreciate your work. I couldn't care less about the money and if I do make something its all just gonna go towards college.
 
 No amount of partying, `A+`s, or sex feels better than your hard work being appreciated. Thank you all.
-
-> This is just a note for the devs, but I may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment, which is Vercel.
