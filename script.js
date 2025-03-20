@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function handleInput(e) {
     const editor = document.getElementById('editor');
     
-    // Check if editor is empty and reset it if needed
+    // Check if editor is empty
     if (editor.innerHTML.trim() === '' || editor.innerText.trim() === '') {
         editor.innerHTML = '<div class="line"><br></div>';
         setCaretToEnd(editor.querySelector('.line'));
@@ -42,8 +42,11 @@ function handleInput(e) {
     }
     
     const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    
     const range = selection.getRangeAt(0);
     const currentNode = range.startContainer;
+    const cursorOffset = range.startOffset;
     
     // Get the current line
     let lineElement = currentNode.nodeType === 1 ? currentNode : currentNode.parentNode;
@@ -61,11 +64,88 @@ function handleInput(e) {
         return;
     }
     
+    // Save cursor information before formatting
+    const beforeText = lineElement.textContent;
+    const beforeHTML = lineElement.innerHTML;
+    
     // Get text content of the line
     const text = lineElement.textContent;
     
     // Apply markdown formatting based on the first characters
     applyMarkdownFormatting(lineElement, text);
+    
+    // Restore cursor position after formatting
+    restoreCursorPosition(lineElement, beforeText, beforeHTML, currentNode, cursorOffset);
+}
+
+function restoreCursorPosition(lineElement, beforeText, beforeHTML, originalNode, originalOffset) {
+    // If the HTML didn't change, no need to adjust cursor
+    if (lineElement.innerHTML === beforeHTML) return;
+    
+    const selection = window.getSelection();
+    const range = document.createRange();
+    
+    // Handle special case: markdown syntax at the beginning
+    if (lineElement.querySelector('.md-syntax') && originalOffset <= lineElement.querySelector('.md-syntax').textContent.length) {
+        // If cursor was in the syntax part, place it after the hidden syntax
+        const syntaxLength = lineElement.querySelector('.md-syntax').textContent.length;
+        const textNode = Array.from(lineElement.childNodes).find(node => 
+            node.nodeType === 3 && node !== lineElement.querySelector('.md-syntax'));
+        
+        if (textNode) {
+            range.setStart(textNode, 0);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } else {
+            // Fallback: set cursor to end of line
+            setCaretToEnd(lineElement);
+        }
+        return;
+    }
+    
+    // If cursor was after the syntax and in a text node
+    if (originalNode.nodeType === 3) {
+        // Try to find the corresponding text node after formatting
+        const textNodes = Array.from(lineElement.childNodes).filter(node => node.nodeType === 3);
+        
+        if (textNodes.length > 0) {
+            // Calculate adjusted offset - syntax length if it was before cursor
+            let adjustedOffset = originalOffset;
+            if (beforeText.startsWith('# ') || beforeText.startsWith('## ') || beforeText.startsWith('### ')) {
+                // Adjust only if cursor was past the syntax
+                if (originalOffset > beforeText.indexOf(' ') + 1) {
+                    adjustedOffset = Math.max(0, originalOffset - (beforeText.indexOf(' ') + 1));
+                }
+            }
+            
+            // Find the appropriate text node and offset
+            let currentLength = 0;
+            for (const textNode of textNodes) {
+                if (currentLength + textNode.length >= adjustedOffset) {
+                    range.setStart(textNode, adjustedOffset - currentLength);
+                    range.collapse(true);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    return;
+                }
+                currentLength += textNode.length;
+            }
+            
+            // If we couldn't find the exact position, put cursor at the end
+            const lastTextNode = textNodes[textNodes.length - 1];
+            range.setStart(lastTextNode, lastTextNode.length);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        } else {
+            // No text nodes found, set to end
+            setCaretToEnd(lineElement);
+        }
+    } else {
+        // For non-text nodes, try to maintain position
+        setCaretToEnd(lineElement);
+    }
 }
 
 // Add this new function to maintain editor structure
@@ -224,6 +304,13 @@ function applyMarkdownFormatting(lineElement, text) {
 }
 
 function addSyntaxSpan(lineElement, syntax) {
+    // Save selection state
+    const selection = window.getSelection();
+    let savedRange = null;
+    if (selection.rangeCount > 0) {
+        savedRange = selection.getRangeAt(0).cloneRange();
+    }
+    
     // Create a span to contain the markdown syntax
     const syntaxSpan = document.createElement('span');
     syntaxSpan.className = 'md-syntax';
@@ -238,6 +325,12 @@ function addSyntaxSpan(lineElement, syntax) {
     
     if (textNode) {
         textNode.textContent = textNode.textContent.substring(syntax.length);
+    }
+    
+    // Restore selection if it was saved
+    if (savedRange) {
+        selection.removeAllRanges();
+        selection.addRange(savedRange);
     }
 }
 
