@@ -13,7 +13,7 @@ body {
 }
 
 .container {
-    max-width: 800px;
+    width: 60%;
     margin: 0 auto;
     padding: 20px;
     height: 100%;
@@ -85,9 +85,5 @@ body {
 
 .md-syntax {
     display: none;
-}
-
-.line:hover .md-syntax, .line:focus .md-syntax {
-    display: inline;
     color: #999;
 }

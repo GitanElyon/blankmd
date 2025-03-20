@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', () => {
     editor.addEventListener('keydown', handleKeyDown);
     editor.addEventListener('click', handleClick);
     
+    // Add selectionchange event to show/hide markdown syntax
+    document.addEventListener('selectionchange', updateActiveLine);
+    
     // Set up mutation observer to maintain structure
     setupEditorObserver();
     
@@ -76,74 +79,138 @@ function handleInput(e) {
     
     // Restore cursor position after formatting
     restoreCursorPosition(lineElement, beforeText, beforeHTML, currentNode, cursorOffset);
+    
+    // Make sure to update the active line
+    updateActiveLine();
 }
 
 function restoreCursorPosition(lineElement, beforeText, beforeHTML, originalNode, originalOffset) {
-    // If the HTML didn't change, no need to adjust cursor
-    if (lineElement.innerHTML === beforeHTML) return;
-    
     const selection = window.getSelection();
-    const range = document.createRange();
     
-    // Handle special case: markdown syntax at the beginning
-    if (lineElement.querySelector('.md-syntax') && originalOffset <= lineElement.querySelector('.md-syntax').textContent.length) {
-        // If cursor was in the syntax part, place it after the hidden syntax
-        const syntaxLength = lineElement.querySelector('.md-syntax').textContent.length;
-        const textNode = Array.from(lineElement.childNodes).find(node => 
-            node.nodeType === 3 && node !== lineElement.querySelector('.md-syntax'));
+    // If we're typing in a header, we need special handling
+    if (lineElement.classList.contains('h1') || lineElement.classList.contains('h2') || lineElement.classList.contains('h3')) {
+        const syntaxSpan = lineElement.querySelector('.md-syntax');
+        if (!syntaxSpan) return; // Safety check
         
-        if (textNode) {
-            range.setStart(textNode, 0);
-            range.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(range);
-        } else {
-            // Fallback: set cursor to end of line
-            setCaretToEnd(lineElement);
+        // Get the text node after the syntax span
+        let targetNode = null;
+        let found = false;
+        
+        // Find the appropriate text node to place cursor
+        for (const node of lineElement.childNodes) {
+            if (found && node.nodeType === 3) {
+                targetNode = node;
+                break;
+            }
+            if (node === syntaxSpan) {
+                found = true;
+            }
         }
+        
+        if (!targetNode) {
+            // If there's no text node after syntax, create one
+            targetNode = document.createTextNode('');
+            lineElement.appendChild(targetNode);
+        }
+        
+        // Calculate new offset based on original position
+        let newOffset = originalOffset;
+        if (originalNode === syntaxSpan || originalNode.parentNode === syntaxSpan) {
+            // If cursor was in syntax span, place it at the beginning of content
+            newOffset = 0;
+        } else if (originalNode.nodeType === 3 && originalNode !== targetNode) {
+            // If cursor was in a different text node, try to map position
+            newOffset = originalOffset;
+            // Adjust for the hidden syntax characters
+            if (syntaxSpan && originalOffset > 0) {
+                // Don't subtract if cursor was at position 0
+                newOffset = Math.max(0, originalOffset - syntaxSpan.textContent.length);
+            }
+        }
+        
+        // Set cursor position
+        const range = document.createRange();
+        range.setStart(targetNode, Math.min(newOffset, targetNode.length));
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
         return;
     }
     
-    // If cursor was after the syntax and in a text node
-    if (originalNode.nodeType === 3) {
-        // Try to find the corresponding text node after formatting
-        const textNodes = Array.from(lineElement.childNodes).filter(node => node.nodeType === 3);
-        
-        if (textNodes.length > 0) {
-            // Calculate adjusted offset - syntax length if it was before cursor
-            let adjustedOffset = originalOffset;
-            if (beforeText.startsWith('# ') || beforeText.startsWith('## ') || beforeText.startsWith('### ')) {
-                // Adjust only if cursor was past the syntax
-                if (originalOffset > beforeText.indexOf(' ') + 1) {
-                    adjustedOffset = Math.max(0, originalOffset - (beforeText.indexOf(' ') + 1));
+    // For non-header lines or fallback
+    // If the HTML didn't change, no need to adjust cursor
+    if (lineElement.innerHTML === beforeHTML) return;
+    
+    const range = document.createRange();
+    
+    // Handle special case: markdown syntax at the beginning
+    const syntaxElement = lineElement.querySelector('.md-syntax');
+    if (syntaxElement) {
+        // If cursor was in or before the syntax part
+        if (originalNode === syntaxElement || 
+            (originalNode.nodeType === 3 && originalOffset <= syntaxElement.textContent.length)) {
+            // Find the first text node after syntax
+            let nextNode = null;
+            let foundSyntax = false;
+            
+            for (const node of lineElement.childNodes) {
+                if (foundSyntax && node.nodeType === 3) {
+                    nextNode = node;
+                    break;
+                }
+                if (node === syntaxElement) {
+                    foundSyntax = true;
                 }
             }
             
-            // Find the appropriate text node and offset
-            let currentLength = 0;
-            for (const textNode of textNodes) {
-                if (currentLength + textNode.length >= adjustedOffset) {
-                    range.setStart(textNode, adjustedOffset - currentLength);
-                    range.collapse(true);
-                    selection.removeAllRanges();
-                    selection.addRange(range);
-                    return;
-                }
-                currentLength += textNode.length;
+            if (nextNode) {
+                range.setStart(nextNode, 0);
+            } else {
+                // Create a text node if needed
+                nextNode = document.createTextNode('');
+                lineElement.appendChild(nextNode);
+                range.setStart(nextNode, 0);
             }
             
-            // If we couldn't find the exact position, put cursor at the end
-            const lastTextNode = textNodes[textNodes.length - 1];
-            range.setStart(lastTextNode, lastTextNode.length);
             range.collapse(true);
             selection.removeAllRanges();
             selection.addRange(range);
-        } else {
-            // No text nodes found, set to end
-            setCaretToEnd(lineElement);
+            return;
         }
+    }
+    
+    // General case - try to find appropriate text node
+    const textNodes = Array.from(lineElement.childNodes).filter(node => node.nodeType === 3);
+    
+    if (textNodes.length > 0) {
+        // Calculate adjusted offset
+        let adjustedOffset = originalOffset;
+        if (syntaxElement && originalNode.nodeType === 3) {
+            // Adjust offset to account for hidden syntax
+            adjustedOffset = Math.max(0, adjustedOffset - syntaxElement.textContent.length);
+        }
+        
+        // Find the text node and offset to place cursor
+        let currentPos = 0;
+        for (const node of textNodes) {
+            if (currentPos + node.length >= adjustedOffset) {
+                range.setStart(node, adjustedOffset - currentPos);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                return;
+            }
+            currentPos += node.length;
+        }
+        
+        // If we couldn't find the right position, place at end of last text node
+        const lastNode = textNodes[textNodes.length - 1];
+        range.setStart(lastNode, lastNode.length);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
     } else {
-        // For non-text nodes, try to maintain position
+        // No text nodes - place at end
         setCaretToEnd(lineElement);
     }
 }
@@ -257,18 +324,15 @@ function handleKeyDown(e) {
         selection.removeAllRanges();
         selection.addRange(newRange);
         
+        // Update active line after key actions
+        setTimeout(updateActiveLine, 0);
+        
         return false;
     }
 }
 
 function handleClick(e) {
-    // Show markdown syntax on click
-    const lineElements = document.querySelectorAll('.line');
-    lineElements.forEach(line => {
-        if (line.contains(e.target)) {
-            line.focus();
-        }
-    });
+    updateActiveLine();
 }
 
 function applyMarkdownFormatting(lineElement, text) {
@@ -371,4 +435,39 @@ function setCaretToEnd(element) {
     selection.removeAllRanges();
     selection.addRange(range);
     element.focus();
+}
+
+// Add this new function to handle showing/hiding syntax based on cursor position
+function updateActiveLine() {
+    const editor = document.getElementById('editor');
+    const selection = window.getSelection();
+    
+    // Hide all syntax markers first
+    document.querySelectorAll('.md-syntax').forEach(el => {
+        el.style.display = 'none';
+    });
+    
+    // If there's a selection
+    if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const currentNode = range.startContainer;
+        
+        // Find the active line
+        let activeLine = currentNode.nodeType === 1 ? currentNode : currentNode.parentNode;
+        while (activeLine && !activeLine.classList.contains('line')) {
+            activeLine = activeLine.parentNode;
+            if (activeLine === editor) {
+                activeLine = null;
+                break;
+            }
+        }
+        
+        // If we found an active line, show its syntax markers
+        if (activeLine) {
+            const syntaxMarker = activeLine.querySelector('.md-syntax');
+            if (syntaxMarker) {
+                syntaxMarker.style.display = 'inline';
+            }
+        }
+    }
 }
